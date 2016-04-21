@@ -7,6 +7,7 @@ Created on Thu Mar 24 11:09:08 2016
 
 import pymysql
 import pandas as pd
+import numpy as np
 
 connection = pymysql.connect(host='localhost',
                              user='root',
@@ -119,4 +120,23 @@ params_inst_allduplicates=pd.read_sql(sql_displaytheduplicates,connection)
 
 duplicates_not_foundin_allduplicates=params_inst_duplicatestodrop[~params_inst_duplicatestodrop.pi_id.isin(params_inst_allduplicates.pi_id)]
 
-params_inst_cleaned=pd.read_sql(sql_params_inst,connection)
+params_inst=pd.read_sql(sql_params_inst,connection)
+
+params_inst_cleaned=params_inst[~params_inst.pi_id.isin(params_inst_duplicatestodrop.pi_id)]
+
+sql1="""SELECT * FROM ba3.concreteinstancewithlevel"""
+
+sql2="""SELECT * FROM ba3.concrete_instances"""
+
+levelinstance=pd.read_sql(sql1,connection)
+
+concreteinstance=pd.read_sql(sql2,connection)
+
+checklist= concreteinstance[~concreteinstance.inst_id.isin(levelinstance.inst_id)].inst_id.values.tolist()
+
+check_sql="""select distinct(pi_text) from params_inst
+where pi_type_id in (%s) 
+and pi_name='Family'""" %str(checklist).strip('[]')
+
+check=pd.read_sql(check_sql,connection)
+
