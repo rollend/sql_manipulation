@@ -16,7 +16,7 @@ Tested but doesnt perform well, 2 million rows requires at least 2 hrs.
 
 Suggested General steps:
     Create parameters for filtering duplicates using dictionary 
-    Find duplicates for mod id, sync id respectively
+    Find duplicates for each mod id, sync id respectively
     Validate (Validation process is checking the found duplicate instances that existing in the cleaned instances dataset)
     Create a new table with sufix _new (only once) and insert ignore into new table
     delete unwanted pi_id from new table, loop for all sync ids through single commiting
@@ -117,8 +117,10 @@ def find_duplicates(database,sync,table):
                                 (select inst_id 
                                         from elem_inst
                                         where inst_psid = %s)""" %(table,sync),con)
+    #params_inst_all=pd.read_sql("""SELECT * FROM %s where pi_type_id = %s""" %(table,inst_id),con)    
     p_clean=params_inst_all[~params_inst_all.duplicated(duplicates_parameters[table])]
-    p_duplicate=params_inst_all[params_inst_all.duplicated(duplicates_parameters[table])]    
+    p_duplicate=params_inst_all[params_inst_all.duplicated(duplicates_parameters[table])]
+    con.close()    
     return p_clean, p_duplicate, duplicates_parameters
     
 def validating(p_clean, p_duplicate, duplicates_parameters,table):
@@ -154,7 +156,7 @@ def copy_database(database,table):
     cursor.execute("commit")
     con.close()
                                     
-def commit_to_database(p_duplicate,database,sync,table):    
+def commit_to_database(p_duplicate,database,table):    
     host,db,user,passwd,db,charset=connect_database(database)
     con=pymysql.connect(host=host,user=user,passwd=passwd,db=db,charset=charset)
     cursor=con.cursor()
@@ -165,6 +167,7 @@ def commit_to_database(p_duplicate,database,sync,table):
     sql_delete_id=[]
     if p_duplicate.empty:
         print("None has been deleted")
+        con.close()
     else:
         for id in p_duplicate.pi_id.values:
             sql_delete_duplicates= """delete from params_inst_new where pi_id = %s""" % (id)
@@ -175,7 +178,7 @@ def commit_to_database(p_duplicate,database,sync,table):
             cursor.execute("commit")
         con.close()
 
-def commit_to_org_database(p_duplicate,database,sync,table):    
+def commit_to_org_database(p_duplicate,database,table):    
     host,db,user,passwd,db,charset=connect_database(database)
     con=pymysql.connect(host=host,user=user,passwd=passwd,db=db,charset=charset)
     cursor=con.cursor()
@@ -186,6 +189,7 @@ def commit_to_org_database(p_duplicate,database,sync,table):
     sql_delete_id=[]
     if p_duplicate.empty:
         print("None has been deleted")
+        con.close()
     else:
         for id in p_duplicate.pi_id.values:
             sql_delete_duplicates= """delete from %s where pi_id = %s""" % (table,id)
@@ -195,7 +199,7 @@ def commit_to_org_database(p_duplicate,database,sync,table):
             cursor.execute(delete_id)
             cursor.execute("commit")
         con.close()
-        
+"""        
 def rename_table(database,table):
     host,db,user,passwd,db,charset=connect_database(database)
     con = pymysql.connect(host=host,user=user,passwd=passwd,db=db,charset=charset)
@@ -222,7 +226,7 @@ def drop_table(database,table):
     cursor.execute(sql_drop_table)
     cursor.execute("commit")
     con.close()
-
+"""
 def main(database,table):
     #database='local'
     #database='UAT'
@@ -241,11 +245,11 @@ def main(database,table):
                 print("Sync ID %d" %i)
                 p_clean, p_duplicate, duplicates_parameters= find_duplicates(database,i,table)
                 p_duplicate_validate = validating(p_clean, p_duplicate, duplicates_parameters,table)        
-                commit_to_org_database(p_duplicate_validate,database,i,table)
-                sucess_list[i]=len(p_duplicate)
+                commit_to_org_database(p_duplicate_validate,database,table)                                                       
                 records=records.append(p_duplicate)
-            print(sucess_list)                        
-            records.to_csv('records.csv')
+                records.to_csv('%s_records_droped_%s.csv'%(table,i))
+                sucess_list[i]=len(p_duplicate)                
+            print(sucess_list) 
             con.close()
         else:
             print("Practice and validating")
@@ -282,7 +286,7 @@ def main(database,table):
             sucess_list[sync]=len(p_duplicate)            
             print(sucess_list)
             records_sync= records_sync.append(p_duplicate) 
-            records_sync.to_csv('records_%s.csv' %sync) 
+            records_sync.to_csv('%s_records_droped_%s.csv' %(table,sync)) 
             con.close()
         else:
             print("Practice and validating")
@@ -311,4 +315,7 @@ def main(database,table):
         return
         
     
-#if __name__ == "__main__":
+if __name__ == "__main__":
+    database=input("Please type in database: ")
+    table=input("Please type in table: ")
+    main(database,table)
