@@ -30,7 +30,9 @@ Note:
         pi_type_id = inst_id aggregated by inst_psid
     
     MySQL workbench was reporting Index out of range when select * from new table when performing insert, 
-    closing the connections from this script and restart MySQL workbench resolved the problem. 
+    closing the connections from this script and restart MySQL workbench resolved the problem.
+    Dont forget your config file.
+    You can change grouping chunk in clustering variable at main function, current set 10
 
 How to use: Specify database information in dbconfig.ini first then
             Specify which table you want to clean (currently only params_inst)            
@@ -45,6 +47,7 @@ import sys
 import configparser
 import traceback
 import numpy as np
+import csv
 
 def connect_database(database):
     try:
@@ -56,15 +59,14 @@ def connect_database(database):
             passwd=config.get("%s"%database, "passwd")   
             db=config.get("%s"%database, "db")   
             charset='utf8'         
-            #print("Connecting to: " + host + " as user: " + user)            
-            
+            #print("Connecting to: " + host + " as user: " + user)
             # Connect to MySQL database
-            con = pymysql.connect(host=host,user=user,passwd=passwd,db=db,charset=charset)
+            con = pymysql.connect(host=host,user=user,passwd=passwd,db=db,charset=charset,connect_timeout=2000)
             #cur1 = con.cursor()
             #cur2 = con.cursor()
             #cur1.execute("select * from arup_projects")
             #projects=pd.read_sql("select * from arup_projects",con)
-            #print(projects)
+            #print(projects)            
     except pymysql.Error as e:
         print("Error %d: %s" % (e.args[0],e.args[1]))
         sys.exit(1)
@@ -234,10 +236,12 @@ def main(database,table):
     #database='UAT'
     #table='params_inst'
     print("Start......")
+    clustering=50
     sync=input("Please input which syn in num you want to process, for a full clean please type in 'Full': ")    
     host,db,user,passwd,db,charset=connect_database(database)
     con = pymysql.connect(host=host,user=user,passwd=passwd,db=db,charset=charset)
     sync_inf=pd.read_sql("SELECT sync_id,mod_id FROM basyncs",con)
+    con.close()
     if sync=='Full':    
         sucess_list={}
         records=pd.DataFrame()
@@ -245,20 +249,29 @@ def main(database,table):
         if conti_not == 'Yes':              
             for i in sync_inf['sync_id']:
                 print("Sync ID %d" %i)
+                con = pymysql.connect(host=host,user=user,passwd=passwd,db=db,charset=charset)                
                 instance_inf=pd.read_sql("select inst_id from elem_inst where inst_psid = %s" %i,con)
+                con.close()
                 duplicates_num=0 
                 aa=instance_inf['inst_id'].values.tolist()
-                for j in chunker(aa,10):
+                file = open('%s_records_droped_%s.txt'%(table,i), "w")                
+                for j in chunker(aa,clustering):                    
                     p_clean, p_duplicate, duplicates_parameters= find_duplicates(database,str(j).strip('[]'),table)
                     p_duplicate_validate = validating(p_clean, p_duplicate, duplicates_parameters,table)        
                     commit_to_org_database(p_duplicate_validate,database,table)
                     duplicates_num=duplicates_num+len(p_duplicate)
-                    if not p_duplicate.empty:                    
-                        records=records.append(p_duplicate)
-                records.to_csv('%s_records_droped_%s.csv'%(table,i))
+                    if not p_duplicate.empty:
+                        l=0
+                        while l < len(p_duplicate):
+                            file.write(str(p_duplicate.values[l].tolist()).strip('[]')+'\n')
+                            l=l+1                        
+                file.close()    
+                #records.to_csv('%s_records_droped_%s.csv'%(table,i))     
                 sucess_list[i]=duplicates_num                
-            print(sucess_list) 
-            con.close()
+            print(sucess_list)
+            w = csv.writer(open("Summary.csv", "w"))
+            for key, val in sucess_list.items():
+                w.writerow([key, val])            
         else:
             print("Practice and validating")
             print("Copying database......")
@@ -273,15 +286,18 @@ def main(database,table):
             copy_database(database,table)    
             for i in sync_inf['sync_id']:
                 print("Sync ID %d" %i)
+                con = pymysql.connect(host=host,user=user,passwd=passwd,db=db,charset=charset)
                 instance_inf=pd.read_sql("select inst_id from elem_inst where inst_psid = %s" %i,con)
+                con.close()
                 aa=instance_inf['inst_id'].values.tolist()                
                 duplicates_num=0                
-                for j in chunker(aa,10):
+                for j in chunker(aa,clustering):
                     p_clean, p_duplicate, duplicates_parameters= find_duplicates(database,str(j).strip('[]'),table)
                     p_duplicate_validate = validating(p_clean, p_duplicate, duplicates_parameters,table)        
                     commit_to_database(p_duplicate_validate,database,table)
                     duplicates_num=duplicates_num+len(p_duplicate)
                 sucess_list[i]=duplicates_num
+            con = pymysql.connect(host=host,user=user,passwd=passwd,db=db,charset=charset)
             instances=pd.read_sql("SELECT count(*) AS SUM FROM %s" %table,con)
             instances_new=pd.read_sql("SELECT count(*) AS SUM FROM %s_new" %table,con)
             assert(sum(sucess_list.values())==(instances['SUM'][0]-instances_new['SUM'][0]))
@@ -293,19 +309,21 @@ def main(database,table):
         conti_not= input("Warning! Type Yes to perform on original table:")
         if conti_not == 'Yes':            
             print("Sync ID %s" %sync)
+            con = pymysql.connect(host=host,user=user,passwd=passwd,db=db,charset=charset)
             instance_inf=pd.read_sql("select inst_id from elem_inst where inst_psid = %s" %sync,con)
+            con.close()
             duplicates_num=0 
             aa=instance_inf['inst_id'].values.tolist()
-            for j in chunker(aa,10):
+            for j in chunker(aa,clustering):
                 p_clean, p_duplicate, duplicates_parameters= find_duplicates(database,str(j).strip('[]'),table)
                 p_duplicate_validate = validating(p_clean, p_duplicate, duplicates_parameters,table)        
                 commit_to_org_database(p_duplicate_validate,database,table)
                 duplicates_num=duplicates_num+len(p_duplicate)
                 if not p_duplicate.empty:                    
                     records=records.append(p_duplicate)
-            records.to_csv('%s_records_droped_%s.csv'%(table,i))
-            sucess_list[i]=duplicates_num                
-            con.close()
+            records.to_csv('%s_records_droped_%s.csv'%(table,sync))
+            sucess_list[sync]=duplicates_num 
+            print(sucess_list)
         else:
             print("Practice and validating")
             print("Copying database......")
@@ -319,15 +337,18 @@ def main(database,table):
                 print("Table already existing!")
             copy_database(database,table)    
             print("Sync ID %s" %sync)
+            con = pymysql.connect(host=host,user=user,passwd=passwd,db=db,charset=charset)
             instance_inf=pd.read_sql("select inst_id from elem_inst where inst_psid = %s" %sync,con)
+            con.close()
             aa=instance_inf['inst_id'].values.tolist()                
             duplicates_num=0                
-            for j in chunker(aa,10):
+            for j in chunker(aa,clustering):
                 p_clean, p_duplicate, duplicates_parameters= find_duplicates(database,str(j).strip('[]'),table)
                 p_duplicate_validate = validating(p_clean, p_duplicate, duplicates_parameters,table)        
                 commit_to_database(p_duplicate_validate,database,table)
                 duplicates_num=duplicates_num+len(p_duplicate)
-            sucess_list[i]=duplicates_num
+            sucess_list[sync]=duplicates_num
+            con = pymysql.connect(host=host,user=user,passwd=passwd,db=db,charset=charset)
             instances=pd.read_sql("SELECT count(*) AS SUM FROM %s" %table,con)
             instances_new=pd.read_sql("SELECT count(*) AS SUM FROM %s_new" %table,con)
             assert(sum(sucess_list.values())==(instances['SUM'][0]-instances_new['SUM'][0]))
